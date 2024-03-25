@@ -19,6 +19,10 @@ for link in soup.find_all('a', href=True):
     if href.endswith('.pdf') and ('ssb' in href or 'bill' in href):
         pdf_links_with_keywords.append(link['href'])
 
+with open('pdf_urls.txt', 'w') as file:
+        for url in pdf_links_with_keywords:
+            file.write(url + '\n')
+
 for pdf_link in pdf_links_with_keywords:
     # Extract the filename from the URL
     filename = pdf_link.split('/')[-1]
