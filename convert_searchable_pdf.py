@@ -36,13 +36,14 @@ def convert_pdf_to_text_searchable(pdf_path, output_path):
       pdf_path: The path to the PDF file to convert.
 
     Returns:
-      The path to the newly created text-searchable PDF file.
+      A tuple of (output_path, converted) where converted is True if the file
+      was newly created and False if the output already existed.
     """
 
     # Don't process pdfs that are already converted
     if os.path.isfile(output_path) == True:
         print("ALREADY CONVERTED")
-        return output_path
+        return output_path, False
 
     images = convert_from_path(pdf_path)
     pdf_pages = []
@@ -56,11 +57,10 @@ def convert_pdf_to_text_searchable(pdf_path, output_path):
         pdf = PdfReader(io.BytesIO(page))
         pdf_writer.add_page(pdf.pages[0])
 
-    file = open(output_path, "w+b")
-    pdf_writer.write(file)
-    file.close()
+    with open(output_path, "w+b") as file:
+        pdf_writer.write(file)
 
-    return output_path
+    return output_path, True
 
 
 def main():
@@ -80,12 +80,19 @@ def main():
         output_path = os.path.join(output_dir, pdf_path)
         if not is_text_searchable(input_path, output_path):
             print("Text is not searchable")
+            output_pdf_path = output_path
             try:
-                output_pdf_path = convert_pdf_to_text_searchable(
+                output_pdf_path, converted = convert_pdf_to_text_searchable(
                     input_path, output_path)
-            except:
-                print("Error converting: " + input_path)
-            print("Converted {} to {}.".format(input_path, output_pdf_path))
+            except Exception as exc:
+                print("Error converting {}: {}".format(input_path, exc))
+            else:
+                if converted:
+                    print("Converted {} to {}.".format(input_path, output_pdf_path))
+                else:
+                    print("Skipped conversion for {} (already converted output exists).".format(input_path))
+        else:
+            print("Skipped conversion for {} (already text-searchable).".format(input_path))
 
 
 if __name__ == "__main__":
