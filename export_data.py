@@ -1,14 +1,16 @@
-import firebase_admin
-from firebase_admin import firestore
-from firebase_admin import credentials
 import json
 import os
+
+import firebase_admin
+from firebase_admin import firestore
+
+from firebase_credentials import load_service_account_credentials
 
 # Replace with your own credentials and project ID
 # You can get your credentials from your Google Cloud Console
 # More info: https://cloud.google.com/docs/authentication/getting-started
-cred = credentials.Certificate(
-    "uf-sg-legislative-tracker-firebase-adminsdk-jl4ry-e293cdad4e.json")
+cred = load_service_account_credentials()
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 

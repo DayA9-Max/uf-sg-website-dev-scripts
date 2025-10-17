@@ -20,7 +20,12 @@ This repository contains standalone Python scripts that power the legislative do
    pip install -r requirements.txt
    ```
 2. **Prepare directories** – Create the `bills/`, `bills-converted/`, and `test/` folders to match script expectations.
-3. **Configure credentials** – Provide a Firebase Admin service-account JSON for Firestore access and set the `OPENAI_API_KEY` environment variable (or load both via `.env`). Ensure sensitive files stay out of version control.
+3. **Configure credentials** – Provide a Firebase Admin service-account JSON for Firestore access and set the `OPENAI_API_KEY` environment variable (or load both via `.env`). The Firestore scripts read `FIREBASE_SERVICE_ACCOUNT`, which can contain either the absolute path to the service-account JSON file or the raw JSON string. For example:
+   ```env
+   FIREBASE_SERVICE_ACCOUNT=/absolute/path/to/firebase-admin.json
+   OPENAI_API_KEY=sk-...
+   ```
+   If you prefer storing the JSON directly, paste it on a single line (escaping quotes as needed) or use shell quoting when exporting the variable. Ensure sensitive files stay out of version control.
 4. **Install OCR tooling** – Tesseract OCR and Ghostscript must be available on your system for `convert_searchable_pdf.py` to run successfully.
 
 ## Typical Workflow
