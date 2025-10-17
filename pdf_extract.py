@@ -1,9 +1,9 @@
-import os
-import pdfplumber
 import json
 import os
-import openai
 import re
+
+import openai
+import pdfplumber
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,23 +29,25 @@ def extract_beginning(pdf_path: str):
         truncated = (text[:800]) if len(text) > 800 else text
         return truncated
 
+PROMPT_BASE_INSTRUCTIONS = '''You are a helpful assistant that returns to me properly formatted json objects in the format \n{\"id\": \"\", \"title\":  \"\",  \"author\": \"\", \"sponsor\": \"\", \"summary\": \"\",  \"status\": \"\"} extracted from the text I provide. Id is at the beginning of the text in the format \"XXXX-XXXX\" where X is an integer. Summary is a 100 word max summary that does not include authors or sponsors in the summary. Do not include any special escaping characters such as line breaks.
+If the data includes 3000 J. Wayne Reitz Union PO ... or similar, ensure the "status" is "PASSED". Else the "status" property is "TBD".
+This summary is bad: Resolution Celebrating 50 Years of Women’s Athletics at the University of Florida. Sponsored by Senator Jonathan Stephens, Senator Oscar Santiago, Senator Raj Mia, Senator Catherine Gomez, Senator Taylor Hoerle, Senator Isabelle Gerzenshtein, Senator Hana Ali, Senator Savanah Partridge, Deputy Minority Party Leader Mohammed Faisal, Member-at-Large Jacey Cable, Judiciary Vice-Chair Mason Solomon, Senator Bronson Allemand, Senator Saketh Damera, Senator Jacob Ka.
+This summary is good: The University of Florida Student Senate acknowledges the remarkable achievements of the Women's Athletics program, which has produced 92 Olympians earning a total of 64 Olympic medals. In recognition of the program's 50th anniversary and the pioneering efforts of Dr. Ruth Alexander, Donna Deutsch, Linda Hall Thornton, and Mimi Ryan in advocating for Women's Athletics in 1972, the Student Senate honors their contributions. Additionally, the Senate expresses admiration for the female athletes representing the Florida Gators, applauding their dedication, perseverance, and commitment to the university. Lastly, the University of Florida Student Senate celebrates the 50th anniversary of the Women's Athletics program at the university.
+This summary is bad: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings. It has several sponsors, including Judiciary Vice-Chairman Mason Solomon, Senator Mara Vaknin, Senator Julia Haley, Senator Taylor Soukup, Member-at-Large Jacey Cable, Senator Jagger Leach, and Senator Sidney Ruedas. The bill proposes amendments to Rule I, which governs the officers of the Senate. One of the key changes is the process for electing the Senate President, which would occur at the first meeting following the validation of Senate election results. The bill seeks to bring efficiency and transparency to Senate meetings.
+This summary is good: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings by proposing amendments to Rule I, which governs the officers of the Senate. The key change includes a revised process for electing the Senate President immediately after validating Senate election results. The bill's objective is to enhance efficiency and transparency in Senate meetings.
+This is a bad summary: "Each February commemorates Black History Month, a period which honors and appreciates the rich culture, history, and contributions of Black and African Americans throughout their continuous str", it is not fully complete
+Summaries must be full sentences
+'''
+
 
 def generate_message(content: str):
     return [
         {
             "role": "system",
-            "content": '''You are a helpful assistant that returns to me properly formatted json objects in the format \n{\"id\": \"\", \"title\":  \"\",  \"author\": \"\", \"sponsor\": \"\", \"summary\": \"\",  \"status\": \"\"} extracted from the text I provide. Id is at the beginning of the text in the format \"XXXX-XXXX\" where X is an integer. Summary is a 100 word max summary that does not include authors or sponsors in the summary. Do not include any special escaping characters such as line breaks.
-            If the data includes 3000 J. Wayne Reitz Union PO ... or similar, ensure the "status" is "PASSED". Else the "status" property is "TBD".
-            This summary is bad: Resolution Celebrating 50 Years of Women’s Athletics at the University of Florida. Sponsored by Senator Jonathan Stephens, Senator Oscar Santiago, Senator Raj Mia, Senator Catherine Gomez, Senator Taylor Hoerle, Senator Isabelle Gerzenshtein, Senator Hana Ali, Senator Savanah Partridge, Deputy Minority Party Leader Mohammed Faisal, Member-at-Large Jacey Cable, Judiciary Vice-Chair Mason Solomon, Senator Bronson Allemand, Senator Saketh Damera, Senator Jacob Ka.
-            This summary is good: The University of Florida Student Senate acknowledges the remarkable achievements of the Women's Athletics program, which has produced 92 Olympians earning a total of 64 Olympic medals. In recognition of the program's 50th anniversary and the pioneering efforts of Dr. Ruth Alexander, Donna Deutsch, Linda Hall Thornton, and Mimi Ryan in advocating for Women's Athletics in 1972, the Student Senate honors their contributions. Additionally, the Senate expresses admiration for the female athletes representing the Florida Gators, applauding their dedication, perseverance, and commitment to the university. Lastly, the University of Florida Student Senate celebrates the 50th anniversary of the Women's Athletics program at the university. 
-            This summary is bad: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings. It has several sponsors, including Judiciary Vice-Chairman Mason Solomon, Senator Mara Vaknin, Senator Julia Haley, Senator Taylor Soukup, Member-at-Large Jacey Cable, Senator Jagger Leach, and Senator Sidney Ruedas. The bill proposes amendments to Rule I, which governs the officers of the Senate. One of the key changes is the process for electing the Senate President, which would occur at the first meeting following the validation of Senate election results. The bill seeks to bring efficiency and transparency to Senate meetings.
-            This summary is good: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings by proposing amendments to Rule I, which governs the officers of the Senate. The key change includes a revised process for electing the Senate President immediately after validating Senate election results. The bill's objective is to enhance efficiency and transparency in Senate meetings.
-            This is a bad summary: "Each February commemorates Black History Month, a period which honors and appreciates the rich culture, history, and contributions of Black and African Americans throughout their continuous str", it is not fully complete
-            Summaries must be full senetences
-            '''
+            "content": PROMPT_BASE_INSTRUCTIONS,
         },
         {
-            "role": "assistant",
+            "role": "user",
             "content": content,
         }
     ]
@@ -55,17 +57,11 @@ def generate_message_second(content: str):
     return [
         {
             "role": "system",
-            "content": '''Please return a PROPERLY formatted JSON string, your last response was not properly formatted. The json should be parseable by python. You are a helpful assistant that returns to me properly formatted json objects in the format \n{\"id\": \"\", \"title\":  \"\",  \"author\": \"\", \"sponsor\": \"\", \"summary\": \"\",  \"status\": \"TBD\"} extracted from the text I provide. Id is at the beginning of the text in the format \"XXXX-XXXX\" where X is an integer. Summary is a 100 word max summary that does not include authors or sponsors in the summary. Do not include any special escaping characters such as line breaks.  
-            This summary is bad: Resolution Celebrating 50 Years of Women’s Athletics at the University of Florida. Sponsored by Senator Jonathan Stephens, Senator Oscar Santiago, Senator Raj Mia, Senator Catherine Gomez, Senator Taylor Hoerle, Senator Isabelle Gerzenshtein, Senator Hana Ali, Senator Savanah Partridge, Deputy Minority Party Leader Mohammed Faisal, Member-at-Large Jacey Cable, Judiciary Vice-Chair Mason Solomon, Senator Bronson Allemand, Senator Saketh Damera, Senator Jacob Ka.
-            This summary is good: The University of Florida Student Senate acknowledges the remarkable achievements of the Women's Athletics program, which has produced 92 Olympians earning a total of 64 Olympic medals. In recognition of the program's 50th anniversary and the pioneering efforts of Dr. Ruth Alexander, Donna Deutsch, Linda Hall Thornton, and Mimi Ryan in advocating for Women's Athletics in 1972, the Student Senate honors their contributions. Additionally, the Senate expresses admiration for the female athletes representing the Florida Gators, applauding their dedication, perseverance, and commitment to the university. Lastly, the University of Florida Student Senate celebrates the 50th anniversary of the Women's Athletics program at the university. 
-            This summary is bad: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings. It has several sponsors, including Judiciary Vice-Chairman Mason Solomon, Senator Mara Vaknin, Senator Julia Haley, Senator Taylor Soukup, Member-at-Large Jacey Cable, Senator Jagger Leach, and Senator Sidney Ruedas. The bill proposes amendments to Rule I, which governs the officers of the Senate. One of the key changes is the process for electing the Senate President, which would occur at the first meeting following the validation of Senate election results. The bill seeks to bring efficiency and transparency to Senate meetings.
-            This summary is good: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings by proposing amendments to Rule I, which governs the officers of the Senate. The key change includes a revised process for electing the Senate President immediately after validating Senate election results. The bill's objective is to enhance efficiency and transparency in Senate meetings.
-            This is a bad summary: "Each February commemorates Black History Month, a period which honors and appreciates the rich culture, history, and contributions of Black and African Americans throughout their continuous str", it is not fully complete
-            Summaries must be full senetences
-            '''
+            "content": """Please return a PROPERLY formatted JSON string, your last response was not properly formatted. The json should be parseable by python.\n"""
+            + PROMPT_BASE_INSTRUCTIONS,
         },
         {
-            "role": "assistant",
+            "role": "user",
             "content": content,
         }
     ]
