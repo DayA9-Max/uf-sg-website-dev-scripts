@@ -1,14 +1,16 @@
 import json
 import os
 import re
-
 import openai
+import logging
 import pdfplumber
 from dotenv import load_dotenv
 
 load_dotenv()
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+logger = logging.getLogger(__name__)
 
 
 def extract_bill_number(title):
@@ -20,14 +22,28 @@ def extract_bill_number(title):
     else:
         return title
 
+def _safe_extract_text(page) -> str:
+    """Return extracted text for a pdfplumber page, defaulting to an empty string."""
+    return page.extract_text() or ""
 
-def extract_beginning(pdf_path: str):
+
+def extract_beginning(pdf_path: str) -> str:
     with pdfplumber.open(pdf_path) as pdf:
-        text = pdf.pages[0].extract_text()
-        if len(pdf.pages) > 1:
-            text = text + "\n" + pdf.pages[1].extract_text()
-        truncated = (text[:800]) if len(text) > 800 else text
-        return truncated
+        page_texts = []
+        page_count = len(pdf.pages)
+        for index in range(min(2, page_count)):
+            text = _safe_extract_text(pdf.pages[index])
+            if text:
+                page_texts.append(text)
+
+        combined_text = "\n".join(page_texts)
+
+        if not combined_text:
+            logger.warning("No text extracted from %s", pdf_path)
+
+        if len(combined_text) > 800:
+            return combined_text[:800]
+        return combined_text
 
 PROMPT_BASE_INSTRUCTIONS = '''You are a helpful assistant that returns to me properly formatted json objects in the format \n{\"id\": \"\", \"title\":  \"\",  \"author\": \"\", \"sponsor\": \"\", \"summary\": \"\",  \"status\": \"\"} extracted from the text I provide. Id is at the beginning of the text in the format \"XXXX-XXXX\" where X is an integer. Summary is a 100 word max summary that does not include authors or sponsors in the summary. Do not include any special escaping characters such as line breaks.
 If the data includes 3000 J. Wayne Reitz Union PO ... or similar, ensure the "status" is "PASSED". Else the "status" property is "TBD".
