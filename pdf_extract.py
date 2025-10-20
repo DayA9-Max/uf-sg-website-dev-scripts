@@ -1,15 +1,21 @@
-import os
-import pdfplumber
 import json
-import openai
-import re
 import logging
+import os
+import re
+from typing import Any, Dict
+
+import openai
+import pdfplumber
 from dotenv import load_dotenv
+from pydantic import ValidationError
+
+from schemas import BillMetadata
 
 load_dotenv()
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -117,12 +123,16 @@ for filename in os.listdir(pdf_folder):
 
         bill_info = get_gpt_info(message)
         try:
-            bill_as_json = json.loads(bill_info)
+            bill_as_json: Dict[str, Any] = json.loads(bill_info)
             bill_as_json["id"] = extract_bill_number(filename)
-            results.append(bill_as_json)
-        except:
-            print("Error " + filename)
+            bill_model = BillMetadata(**bill_as_json)
+        except json.JSONDecodeError:
+            logger.warning("Failed to decode JSON for %s", filename)
             error_paths.append(filename)
+        except ValidationError as exc:
+            logger.warning("Skipping invalid metadata for %s: %s", filename, exc)
+        else:
+            results.append(bill_model.dict())
         print(len(results))
 
 for filename in error_paths:
@@ -136,10 +146,13 @@ for filename in error_paths:
         try:
             bill_as_json = json.loads(bill_info)
             bill_as_json["id"] = extract_bill_number(filename)
-            results.append(bill_as_json)
-        except:
-            print("Error " + filename)
-            error_paths.append(filename)
+            bill_model = BillMetadata(**bill_as_json)
+        except json.JSONDecodeError:
+            logger.warning("Failed to decode JSON for %s", filename)
+        except ValidationError as exc:
+            logger.warning("Skipping invalid metadata for %s: %s", filename, exc)
+        else:
+            results.append(bill_model.dict())
         print(len(results))
 
 # Save results to a JSON file
