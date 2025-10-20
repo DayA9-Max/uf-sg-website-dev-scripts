@@ -3,5 +3,10 @@
 *.DS_Store
 uf-sg-legislative-tracker-firebase-adminsdk-jl4ry-e293cdad4e.json
 __pycache__/
-
+firebase_credentials/
 UFSG_venv/
+firebase_credentials.py
+.vscode/
+.idea/
+.venv/
+*.json
