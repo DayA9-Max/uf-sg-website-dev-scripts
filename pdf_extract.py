@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import os
-
 import pdfplumber
 import json
 import logging
@@ -12,8 +11,6 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from schemas import BillMetadata
-
-from config import BILL_RESULTS_PATH, PDF_EXTRACTION_INPUT_DIR
 
 load_dotenv()
 
@@ -128,49 +125,63 @@ def _process_file(
     return bill_as_json
 
 
-# pdf_folder = 'bills-converted'
-pdf_folder = PDF_EXTRACTION_INPUT_DIR
+def extract_metadata(
+    pdf_folder: str = "bills-converted",
+    output_json: str = "bill_results.json",
+) -> List[dict]:
+    """Extract metadata from PDFs in ``pdf_folder`` and optionally write JSON."""
 
     if not os.path.isdir(pdf_folder):
         raise FileNotFoundError(f"PDF folder does not exist: {pdf_folder}")
 
-for pdf_file in sorted(pdf_folder.glob("*.pdf")):
-    message = generate_message(extract_beginning(pdf_file))
-    print("Extraction complete: " + pdf_file.name)
-    print("="*40)
+    results: List[dict] = []
+    error_paths: List[str] = []
 
-    bill_info = get_gpt_info(message)
-    try:
-        bill_as_json = json.loads(bill_info)
-        bill_as_json["id"] = extract_bill_number(pdf_file.name)
-        results.append(bill_as_json)
-    except:
-        print("Error " + pdf_file.name)
-        error_paths.append(pdf_file)
-    print(len(results))
+    for filename in sorted(os.listdir(pdf_folder)):
+        if not filename.lower().endswith(".pdf"):
+            continue
 
-for pdf_file in error_paths:
-    if pdf_file.suffix.lower() == '.pdf':
-        message = generate_message_second(extract_beginning(pdf_file))
-        print("Extraction complete: " + pdf_file.name)
-        print("="*40)
+        try:
+            bill_json = _process_file(pdf_folder, filename, generate_message)
+            results.append(bill_json)
+            logger.info("Successfully processed %s", filename)
+        except json.JSONDecodeError:
+            logger.warning("JSON decoding error for %s; will retry", filename)
+            error_paths.append(filename)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Error processing %s: %s", filename, exc)
+            error_paths.append(filename)
+
+    if error_paths:
+        logger.info("Retrying %d files with stricter prompt", len(error_paths))
 
     second_pass_failures: List[str] = []
     for filename in error_paths:
         try:
-            bill_as_json = json.loads(bill_info)
-            bill_as_json["id"] = extract_bill_number(pdf_file.name)
-            results.append(bill_as_json)
-        except:
-            print("Error " + pdf_file.name)
-            error_paths.append(pdf_file)
-        print(len(results))
+            bill_json = _process_file(pdf_folder, filename, generate_message_second)
+            results.append(bill_json)
+            logger.info("Successfully processed %s on retry", filename)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Retry failed for %s: %s", filename, exc)
+            second_pass_failures.append(filename)
+
+    if second_pass_failures:
+        logger.warning("Failed to extract data from: %s", ", ".join(second_pass_failures))
+
+    if output_json:
+        with open(output_json, "w", encoding="utf-8") as json_file:
+            json.dump(results, json_file, indent=4)
+        logger.info("Results saved to %s", output_json)
+
+    return results
+
+
+def main() -> None:
+    """CLI entry point to extract metadata using default settings."""
 
     logging.basicConfig(level=logging.INFO)
     extract_metadata()
 
-with BILL_RESULTS_PATH.open('w') as json_file:
-    json.dump(results, json_file, indent=4)
 
 if __name__ == "__main__":
     main()
