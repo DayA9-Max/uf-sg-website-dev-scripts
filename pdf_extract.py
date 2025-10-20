@@ -131,8 +131,8 @@ def _process_file(
 # pdf_folder = 'bills-converted'
 pdf_folder = PDF_EXTRACTION_INPUT_DIR
 
-    if not os.path.isdir(pdf_folder):
-        raise FileNotFoundError(f"PDF folder does not exist: {pdf_folder}")
+if not os.path.isdir(pdf_folder):
+    raise FileNotFoundError(f"PDF folder does not exist: {pdf_folder}")
 
 for pdf_file in sorted(pdf_folder.glob("*.pdf")):
     message = generate_message(extract_beginning(pdf_file))

@@ -2,13 +2,20 @@
 
 import io
 import os
+import shutil
 from typing import List, Tuple
 import pytesseract
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader, PdfWriter
+from dotenv import load_dotenv
+load_dotenv()
 
 from config import PDF_CONVERSION_INPUT_DIR, PDF_CONVERSION_OUTPUT_DIR
 
+POPPLER_PATH = os.getenv("POPPLER_PATH")
+TESSERACT_PATH = os.getenv("TESSERACT_PATH")
+if TESSERACT_PATH:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 def is_text_searchable(pdf_path, output_path):
     """Checks if a PDF file is text-searchable.
@@ -20,16 +27,16 @@ def is_text_searchable(pdf_path, output_path):
     """
     try:
         reader = PdfReader(pdf_path)
-        text = reader.pages[0].extract_text()
+        text = (reader.pages[0].extract_text() or "") # handle None
         print(text)
         if len(text) > 0:
-            os.system(f'cp {pdf_path} {output_path}')
+            shutil.copy(pdf_path, output_path) # cross-platform copy
             print("copied")
             return True
         else:
             return False
-    except:
-        print("Error on " + pdf_path)
+    except Exception as e:
+        print(f"Error on {pdf_path}: {e}")
         return True  # Don't try converting
 
 
@@ -47,8 +54,10 @@ def convert_pdf_to_text_searchable(pdf_path, output_path):
     if os.path.isfile(output_path) == True:
         print("ALREADY CONVERTED")
         return output_path, False
-
-    images = convert_from_path(pdf_path)
+    kwargs = {}
+    if POPPLER_PATH:
+        kwargs["poppler_path"] = POPPLER_PATH
+    images = convert_from_path(pdf_path, **kwargs)
     pdf_pages = []
     for image in images:
         text = pytesseract.image_to_pdf_or_hocr(image, extension="pdf")
@@ -76,32 +85,32 @@ def convert_directory(
     output_dir = PDF_CONVERSION_OUTPUT_DIR
     print("Beginning OCR scan")
     os.makedirs(output_dir, exist_ok=True)
-
-        if not is_text_searchable(input_path, output_path):
-            print("Text is not searchable")
-            try:
-                output_pdf_path, converted = convert_pdf_to_text_searchable(
-                    input_path, output_path
-                )
-            except Exception as exc:
-                print(f"Error converting {input_path}: {exc}")
-            else:
-                if converted:
-                    print(f"Converted {input_path} to {output_pdf_path}.")
-                else:
-                    print(
-                        "Skipped conversion for {} (already converted output exists).".format(
-                            input_path
-                        )
-                    )
-                results.append((output_pdf_path, converted))
-        else:
-            print(
-                "Skipped conversion for {} (already text-searchable).".format(
-                    input_path
-                )
+    
+    if not is_text_searchable(input_dir, output_dir):
+        print("Text is not searchable")
+        try:
+            output_pdf_path, converted = convert_pdf_to_text_searchable(
+                input_dir, output_dir
             )
-            results.append((output_path, False))
+        except Exception as exc:
+            print(f"Error converting {input_dir}: {exc}")
+        else:
+            if converted:
+                print(f"Converted {input_dir} to {output_pdf_path}.")
+            else:
+                print(
+                    "Skipped conversion for {} (already converted output exists).".format(
+                        input_dir
+                    )
+                )
+            results.append((output_pdf_path, converted))
+    else:
+        print(
+            "Skipped conversion for {} (already text-searchable).".format(
+                input_dir
+            )
+        )
+        results.append((output_dir, False))
 
     return results
 

@@ -20,26 +20,32 @@ This repository contains standalone Python scripts that power the legislative do
    pip install -r requirements.txt
    ```
 2. **Prepare directories** – Create the `bills/`, `bills-converted/`, and `test/` folders to match script expectations, or override the defaults via environment variables (see below). The scraper and converter will create directories automatically when they are missing.
-3. **Configure credentials** – Provide a Firebase Admin service-account JSON for Firestore access and set the `OPENAI_API_KEY` environment variable (or load both via `.env`).
+3. **Configure credentials** – Provide a Firebase Admin service-account JSON for Firestore access and set the `OPENAI_API_KEY` environment variable (or load both via `.env`). The Firestore scripts read `FIREBASE_SERVICE_ACCOUNT`, which can contain either the absolute path to the service-account JSON file or the raw JSON string. For example:
+   ```env
+   FIREBASE_SERVICE_ACCOUNT=/absolute/path/to/firebase-admin.json
+   OPENAI_API_KEY=sk-...
+   ```
+   If you prefer storing the JSON directly, paste it on a single line (escaping quotes as needed) or use shell quoting when exporting the variable. Ensure sensitive files stay out of version control.
 
-## Configuration
+   ## Configuration
 
-All scripts pull their settings from `config.py`, which reads environment variables via `python-dotenv`. Copy `.env.example` to `.env` and adjust the values for your environment; any variables you omit fall back to the defaults listed below. Paths can be absolute or relative to the repository root unless otherwise noted.
+   All scripts pull their settings from `config.py`, which reads environment variables via `python-dotenv`. Copy `.env.example` to `.env` and adjust the values for your environment; any variables you omit fall back to the defaults listed below. Paths can be absolute or relative to the repository root unless otherwise noted.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `UFSG_SCRAPER_SOURCE_URL` | `https://sg.ufl.edu/branches/legislative/senate-resources/` | Source page for the PDF scraper (`app.py`). |
-| `UFSG_DOWNLOAD_DIR` | `bills/` | Directory where PDFs are downloaded. |
-| `UFSG_PDF_URLS_PATH` | `pdf_urls.txt` | File that stores the list of discovered PDF URLs. |
-| `UFSG_CONVERSION_INPUT_DIR` | `bills/` | Directory scanned for PDFs that might require OCR conversion. |
-| `UFSG_CONVERSION_OUTPUT_DIR` | `bills-converted/` | Destination directory for converted, searchable PDFs. |
-| `UFSG_EXTRACTION_INPUT_DIR` | `test/` | Directory that `pdf_extract.py` scans when building `bill_results.json`. |
-| `UFSG_BILL_RESULTS_PATH` | `bill_results.json` | Location of the JSON metadata exported by `pdf_extract.py`. |
-| `UFSG_LEGISLATION_DATA_PATH` | `legislation_data.json` | Shared path used by `export_data.py` and `firestore_sync.py`. |
-| `FIREBASE_SERVICE_ACCOUNT` | _(required)_ | Path to your Firebase Admin SDK service-account JSON or the raw JSON document. |
-| `OPENAI_API_KEY` | _(required)_ | API key for the OpenAI Chat Completions API used in `pdf_extract.py`. |
+   | Variable | Default | Purpose |
+   | --- | --- | --- |
+   | `UFSG_SCRAPER_SOURCE_URL` | `https://sg.ufl.edu/branches/legislative/senate-resources/` | Source page for the PDF scraper (`app.py`). |
+   | `UFSG_DOWNLOAD_DIR` | `bills/` | Directory where PDFs are downloaded. |
+   | `UFSG_PDF_URLS_PATH` | `pdf_urls.txt` | File that stores the list of discovered PDF URLs. |
+   | `UFSG_CONVERSION_INPUT_DIR` | `bills/` | Directory scanned for PDFs that might require OCR conversion. |
+   | `UFSG_CONVERSION_OUTPUT_DIR` | `bills-converted/` | Destination directory for converted, searchable PDFs. |
+   | `UFSG_EXTRACTION_INPUT_DIR` | `test/` | Directory that `pdf_extract.py` scans when building `bill_results.json`. |
+   | `UFSG_BILL_RESULTS_PATH` | `bill_results.json` | Location of the JSON metadata exported by `pdf_extract.py`. |
+   | `UFSG_LEGISLATION_DATA_PATH` | `legislation_data.json` | Shared path used by `export_data.py` and `firestore_sync.py`. |
+   | `FIREBASE_SERVICE_ACCOUNT` | _(required)_ | Path to your Firebase Admin SDK service-account JSON or the raw JSON document. |
+   | `OPENAI_API_KEY` | _(required)_ | API key for the OpenAI Chat Completions API used in `pdf_extract.py`. |
 
-When `FIREBASE_SERVICE_ACCOUNT` points to a file, the credential loader reads directly from disk. If you prefer embedding the JSON contents instead, paste them as a single-line string (escaping quotes if necessary). Ensure `.env` remains untracked so secrets stay private.
+   When `FIREBASE_SERVICE_ACCOUNT` points to a file, the credential loader reads directly from disk. If you prefer embedding the JSON contents instead, paste them as a single-line string (escaping quotes if necessary). Ensure `.env` remains untracked so secrets stay private.
+
 4. **Install OCR tooling** – Tesseract OCR and Ghostscript must be available on your system for `convert_searchable_pdf.py` to run successfully.
 
 ## Typical Workflow
