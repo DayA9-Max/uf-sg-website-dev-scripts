@@ -1,5 +1,8 @@
+"""OCR helpers for converting PDFs into searchable versions."""
+
 import io
 import os
+from typing import List, Tuple
 import pytesseract
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader, PdfWriter
@@ -7,7 +10,6 @@ from PyPDF2 import PdfReader, PdfWriter
 
 def is_text_searchable(pdf_path, output_path):
     """Checks if a PDF file is text-searchable.
-
     Args:
       pdf_path: The path to the PDF file.
 
@@ -31,13 +33,12 @@ def is_text_searchable(pdf_path, output_path):
 
 def convert_pdf_to_text_searchable(pdf_path, output_path):
     """Converts a PDF file to a text-searchable PDF file using Tesseract.
-
     Args:
       pdf_path: The path to the PDF file to convert.
 
     Returns:
-      A tuple of (output_path, converted) where converted is True if the file
-      was newly created and False if the output already existed.
+      A tuple of (output_path, converted) where converted is True if the file was newly 
+      created and False if the output already existed.
     """
 
     # Don't process pdfs that are already converted
@@ -48,8 +49,7 @@ def convert_pdf_to_text_searchable(pdf_path, output_path):
     images = convert_from_path(pdf_path)
     pdf_pages = []
     for image in images:
-        text = pytesseract.image_to_pdf_or_hocr(
-            image, extension="pdf")
+        text = pytesseract.image_to_pdf_or_hocr(image, extension="pdf")
         pdf_pages.append(text)
 
     pdf_writer = PdfWriter()
@@ -63,37 +63,59 @@ def convert_pdf_to_text_searchable(pdf_path, output_path):
     return output_path, True
 
 
-def main():
-    """The main function that scans a directory of PDF files and converts those that
-    are not text-searchable to text-searchable PDF files using Tesseract.
-    """
+def convert_directory(
+    input_dir: str = "bills", output_dir: str = "bills-converted") -> List[Tuple[str, bool]]:
+    """Convert PDFs in ``input_dir`` into searchable PDFs within ``output_dir``."""
 
-    input_dir = "bills"
-    output_dir = "bills-converted"
+    if not os.path.isdir(input_dir):
+        raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
 
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
-    print("Beginning loop")
-    for pdf_path in os.listdir(input_dir):
-        input_path = os.path.join(input_dir, pdf_path)
-        output_path = os.path.join(output_dir, pdf_path)
+    print("Beginning OCR scan")
+    results: List[Tuple[str, bool]] = []
+    for entry in sorted(os.listdir(input_dir)):
+        if not entry.lower().endswith(".pdf"):
+            continue
+
+        input_path = os.path.join(input_dir, entry)
+        if not os.path.isfile(input_path):
+            continue
+
+        output_path = os.path.join(output_dir, entry)
+
         if not is_text_searchable(input_path, output_path):
             print("Text is not searchable")
-            output_pdf_path = output_path
             try:
                 output_pdf_path, converted = convert_pdf_to_text_searchable(
-                    input_path, output_path)
+                    input_path, output_path
+                )
             except Exception as exc:
-                print("Error converting {}: {}".format(input_path, exc))
+                print(f"Error converting {input_path}: {exc}")
             else:
                 if converted:
-                    print("Converted {} to {}.".format(input_path, output_pdf_path))
+                    print(f"Converted {input_path} to {output_pdf_path}.")
                 else:
-                    print("Skipped conversion for {} (already converted output exists).".format(input_path))
+                    print(
+                        "Skipped conversion for {} (already converted output exists).".format(
+                            input_path
+                        )
+                    )
+                results.append((output_pdf_path, converted))
         else:
-            print("Skipped conversion for {} (already text-searchable).".format(input_path))
+            print(
+                "Skipped conversion for {} (already text-searchable).".format(
+                    input_path
+                )
+            )
+            results.append((output_path, False))
 
+    return results
+
+
+def main() -> None:
+    """CLI entry point to convert PDFs using default settings."""
+    convert_directory()
 
 if __name__ == "__main__":
     main()
