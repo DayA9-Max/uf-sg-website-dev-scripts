@@ -4,17 +4,19 @@ from __future__ import annotations
 import os
 import pdfplumber
 import json
-import openai
-import re
 import logging
 from typing import Callable, Iterable, List
 from textwrap import dedent
 from dotenv import load_dotenv
+from pydantic import ValidationError
+
+from schemas import BillMetadata
 
 load_dotenv()
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
