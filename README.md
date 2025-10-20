@@ -3,10 +3,10 @@
 This repository contains standalone Python scripts that power the legislative document pipeline for the University of Florida Student Government (UF SG) website. Each script focuses on a specific step in moving Senate legislation from the public resources page into a structured, searchable dataset backed by Firestore.
 
 ## Repository Structure
-
+- **`pipeline.py`** – Provides a command-line interface (CLI) that orchestrates the download, OCR conversion, and metadata extraction steps.
 - **`app.py`** – Scrapes the UF SG Senate resources page, records PDF URLs containing "ssb" or "bill", and downloads them into the local `bills/` directory.
 - **`convert_searchable_pdf.py`** – Detects which downloaded PDFs are image-only and converts them into searchable PDFs via `pdf2image`, `pytesseract`, and `PyPDF2`, writing results to `bills-converted/`.
-- **`pdf_extract.py`** – Opens PDFs (currently pointing to the `test/` directory), captures first-page text with `pdfplumber`, and calls the OpenAI Chat Completions API to extract structured bill metadata into `bill_results.json`.
+- **`pdf_extract.py`** – Opens PDFs (currently pointing to the `test/` directory, will default to the `bills-converted/`), captures first-page text with `pdfplumber`, and calls the OpenAI Chat Completions API to extract structured bill metadata into `bill_results.json`.
 - **`export_data.py`** – Exports the Firestore `legislation` collection into `legislation_data.json` and normalizes records (e.g., ensuring an `verified` flag) to simplify downstream processing.
 - **`firestore_sync.py`** – Reads `legislation_data.json` and pushes each record back into Firestore, overwriting or creating documents keyed by `id`.
 - **Supporting data files** – Artifacts such as `pdf_urls.txt`, `bill_results.json`, and `legislation_data.json` capture intermediate results or exported datasets that other scripts reuse.
@@ -43,12 +43,34 @@ When `FIREBASE_SERVICE_ACCOUNT` points to a file, the credential loader reads di
 4. **Install OCR tooling** – Tesseract OCR and Ghostscript must be available on your system for `convert_searchable_pdf.py` to run successfully.
 
 ## Typical Workflow
-
 1. Run `app.py` to refresh the list of Senate legislation PDFs and download them locally.
 2. Run `convert_searchable_pdf.py` to create searchable copies of any image-only PDFs.
 3. Run `pdf_extract.py` to produce structured metadata, handling retries for malformed AI responses as needed.
 4. Use `export_data.py` to snapshot the current Firestore data or to filter data down to Senate bills.
 5. Apply updates with `firestore_sync.py`, which writes the normalized records back to Firestore.
+
+## Command-Line Workflow
+Run the orchestration CLI to execute individual stages or the full pipeline:
+
+```bash
+# Show command help
+python pipeline.py --help
+
+# Download PDFs only
+python pipeline.py download --download-dir bills --urls-file pdf_urls.txt
+
+# Convert a directory of PDFs into searchable PDFs
+python pipeline.py ocr --input-dir bills --output-dir bills-converted
+
+# Extract bill metadata into bill_results.json
+python pipeline.py extract --input-dir bills-converted --output-json bill_results.json
+
+# Perform all steps in sequence (download -> ocr -> extract)
+python pipeline.py run-all
+```
+
+Use `export_data.py` to snapshot the current Firestore data or to filter data down to Senate bills, and `firestore_sync.py` to write the normalized records back to Firestore when you are ready to publish updates.
+
 
 ## Next Steps and Enhancements
 

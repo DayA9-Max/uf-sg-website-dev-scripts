@@ -1,3 +1,6 @@
+"""Utilities for downloading UF SG Senate legislation PDFs."""
+
+from __future__ import annotations
 from bs4 import BeautifulSoup
 import requests
 
@@ -11,20 +14,18 @@ download_folder.mkdir(parents=True, exist_ok=True)
 response = requests.get(SCRAPER_SOURCE_URL)
 soup = BeautifulSoup(response.content, 'html.parser')
 
-pdf_links_with_keywords = []
+def _write_url_list(urls: Iterable[str], destination: str) -> None:
+    os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
+    with open(destination, "w", encoding="utf-8") as file:
+        for pdf_url in urls:
+            file.write(pdf_url + "\n")
 
-for link in soup.find_all('a', href=True):
-    href = link['href'].lower()
-    if href.endswith('.pdf') and ('ssb' in href or 'bill' in href):
-        pdf_links_with_keywords.append(link['href'])
 
 with PDF_URLS_PATH.open('w') as file:
     for url in pdf_links_with_keywords:
         file.write(url + '\n')
 
-for pdf_link in pdf_links_with_keywords:
-    # Extract the filename from the URL
-    filename = pdf_link.split('/')[-1]
+    pdf_links_with_keywords = _extract_pdf_links(url)
 
     # Construct the full path to save the file
     file_path = download_folder / filename
@@ -34,3 +35,16 @@ for pdf_link in pdf_links_with_keywords:
     with file_path.open('wb') as pdf_file:
         pdf_file.write(pdf_response.content)
         print(f"Downloaded: {filename}")
+
+    return downloaded_files
+
+
+def main() -> None:
+    """CLI entry point to download PDFs using default settings."""
+    download_legislation_pdfs()
+
+
+if __name__ == "__main__":
+    main()
+    # Script to download UF SG Senate legislation PDFs
+
