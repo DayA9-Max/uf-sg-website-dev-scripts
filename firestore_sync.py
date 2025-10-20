@@ -3,6 +3,7 @@ import json
 import firebase_admin
 from firebase_admin import firestore
 
+from config import LEGISLATION_DATA_PATH
 from firebase_credentials import load_service_account_credentials
 
 cred = load_service_account_credentials()
@@ -23,8 +24,8 @@ def upload_data(data):
 
 
 def main():
-    json_file_path = "legislation_data.json"
-    with open(json_file_path, 'r') as json_file:
+    json_file_path = LEGISLATION_DATA_PATH
+    with json_file_path.open('r') as json_file:
         data = json.load(json_file)
         upload_data(data)
         print("Data uploaded to Cloud Firestore successfully!")

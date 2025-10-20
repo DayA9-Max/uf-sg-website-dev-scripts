@@ -1,10 +1,13 @@
 import os
+
 import pdfplumber
 import json
 import openai
 import re
 import logging
 from dotenv import load_dotenv
+
+from config import BILL_RESULTS_PATH, PDF_EXTRACTION_INPUT_DIR
 
 load_dotenv()
 
@@ -103,48 +106,45 @@ def get_gpt_info(message):
 
 
 # pdf_folder = 'bills-converted'
-pdf_folder = 'test'
+pdf_folder = PDF_EXTRACTION_INPUT_DIR
 
 results = []
 error_paths = []
 
-for filename in os.listdir(pdf_folder):
-    if filename.endswith('.pdf'):
-        pdf_path = os.path.join(pdf_folder, filename)
-        message = generate_message(extract_beginning(pdf_path))
-        print("Extraction complete: " + filename)
+for pdf_file in sorted(pdf_folder.glob("*.pdf")):
+    message = generate_message(extract_beginning(pdf_file))
+    print("Extraction complete: " + pdf_file.name)
+    print("="*40)
+
+    bill_info = get_gpt_info(message)
+    try:
+        bill_as_json = json.loads(bill_info)
+        bill_as_json["id"] = extract_bill_number(pdf_file.name)
+        results.append(bill_as_json)
+    except:
+        print("Error " + pdf_file.name)
+        error_paths.append(pdf_file)
+    print(len(results))
+
+for pdf_file in error_paths:
+    if pdf_file.suffix.lower() == '.pdf':
+        message = generate_message_second(extract_beginning(pdf_file))
+        print("Extraction complete: " + pdf_file.name)
         print("="*40)
 
         bill_info = get_gpt_info(message)
         try:
             bill_as_json = json.loads(bill_info)
-            bill_as_json["id"] = extract_bill_number(filename)
+            bill_as_json["id"] = extract_bill_number(pdf_file.name)
             results.append(bill_as_json)
         except:
-            print("Error " + filename)
-            error_paths.append(filename)
-        print(len(results))
-
-for filename in error_paths:
-    if filename.endswith('.pdf'):
-        pdf_path = os.path.join(pdf_folder, filename)
-        message = generate_message_second(extract_beginning(pdf_path))
-        print("Extraction complete: " + filename)
-        print("="*40)
-
-        bill_info = get_gpt_info(message)
-        try:
-            bill_as_json = json.loads(bill_info)
-            bill_as_json["id"] = extract_bill_number(filename)
-            results.append(bill_as_json)
-        except:
-            print("Error " + filename)
-            error_paths.append(filename)
+            print("Error " + pdf_file.name)
+            error_paths.append(pdf_file)
         print(len(results))
 
 # Save results to a JSON file
 
-with open('bill_results.json', 'w') as json_file:
+with BILL_RESULTS_PATH.open('w') as json_file:
     json.dump(results, json_file, indent=4)
 
 print("Results saved to bill_results.json")

@@ -4,6 +4,8 @@ import pytesseract
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader, PdfWriter
 
+from config import PDF_CONVERSION_INPUT_DIR, PDF_CONVERSION_OUTPUT_DIR
+
 
 def is_text_searchable(pdf_path, output_path):
     """Checks if a PDF file is text-searchable.
@@ -68,11 +70,10 @@ def main():
     are not text-searchable to text-searchable PDF files using Tesseract.
     """
 
-    input_dir = "bills"
-    output_dir = "bills-converted"
+    input_dir = PDF_CONVERSION_INPUT_DIR
+    output_dir = PDF_CONVERSION_OUTPUT_DIR
 
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     print("Beginning loop")
     for pdf_path in os.listdir(input_dir):

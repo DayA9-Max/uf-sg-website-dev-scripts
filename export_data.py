@@ -1,9 +1,9 @@
 import json
-import os
 
 import firebase_admin
 from firebase_admin import firestore
 
+from config import LEGISLATION_DATA_PATH
 from firebase_credentials import load_service_account_credentials
 
 # Replace with your own credentials and project ID
@@ -18,12 +18,12 @@ db = firestore.client()
 legislation_ref = db.collection("legislation")
 
 # Check if legislation_data.json already exists
-output_file_path = "legislation_data.json"
-if os.path.exists(output_file_path):
+output_file_path = LEGISLATION_DATA_PATH
+if output_file_path.exists():
     print(f"{output_file_path} already exists. Checking for filtering.")
 
     # Load existing data from the JSON file
-    with open(output_file_path, "r") as existing_file:
+    with output_file_path.open("r") as existing_file:
         existing_legislation_data = json.load(existing_file)
 
     # Filter out entries whose id property does not begin with "SSB"
@@ -35,7 +35,7 @@ if os.path.exists(output_file_path):
         entry["verified"] = entry.get("verified", False)
 
     # Write the filtered data back to the JSON file
-    with open(output_file_path, "w") as output_file:
+    with output_file_path.open("w") as output_file:
         json.dump(filtered_legislation_data, output_file, indent=2)
 
     print(
@@ -53,7 +53,7 @@ else:
         legislation_data.append(doc_data)
 
     # Write the data to the JSON file
-    with open(output_file_path, "w") as output_file:
+    with output_file_path.open("w") as output_file:
         json.dump(legislation_data, output_file, indent=2)
 
     print(f"Exported {len(legislation_data)} documents to {output_file_path}")
