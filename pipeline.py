@@ -6,7 +6,14 @@ import argparse
 import logging
 from typing import Callable, Sequence
 
-from app import DEFAULT_URL, download_legislation_pdfs
+from app import download_legislation_pdfs
+from config import (
+    BILL_RESULTS_PATH,
+    DOWNLOAD_DIR,
+    PDF_CONVERSION_OUTPUT_DIR,
+    PDF_URLS_PATH,
+    SCRAPER_SOURCE_URL,
+)
 from convert_searchable_pdf import convert_directory
 from pdf_extract import extract_metadata
 
@@ -35,9 +42,7 @@ def _run_ocr(args: argparse.Namespace) -> None:
 
 
 def _run_extract(args: argparse.Namespace) -> None:
-    logging.info(
-        "Extracting structured data from PDFs in %s", args.input_dir
-    )
+    logging.info("Extracting structured data from PDFs in %s", args.input_dir)
     extract_metadata(pdf_folder=args.input_dir, output_json=args.output_json)
 
 
@@ -54,93 +59,84 @@ def _run_all(args: argparse.Namespace) -> None:
 
 
 def _add_download_parser(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "download", description="Download Senate legislation PDFs"
-    )
-    parser.add_argument("--url", default=DEFAULT_URL, help="Page containing bill links")
+    parser = subparsers.add_parser("download", description="Download Senate legislation PDFs")
+    parser.add_argument("--url", default=SCRAPER_SOURCE_URL, help="Page containing bill links")
     parser.add_argument(
         "--download-dir",
-        default="bills",
+        default=str(DOWNLOAD_DIR),
         help="Directory where the PDFs will be stored",
     )
     parser.add_argument(
         "--urls-file",
-        default="pdf_urls.txt",
+        default=str(PDF_URLS_PATH),
         help="Where to write the list of discovered PDF URLs",
     )
     parser.set_defaults(func=_run_download)
 
 
 def _add_ocr_parser(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "ocr", description="Convert PDFs into searchable PDFs using OCR"
-    )
+    parser = subparsers.add_parser("ocr", description="Convert PDFs into searchable PDFs using OCR")
     parser.add_argument(
         "--input-dir",
-        default="bills",
+        default=str(DOWNLOAD_DIR),
         help="Directory containing the source PDFs",
     )
     parser.add_argument(
         "--output-dir",
-        default="bills-converted",
+        default=str(PDF_CONVERSION_OUTPUT_DIR),
         help="Directory for the searchable output PDFs",
     )
     parser.set_defaults(func=_run_ocr)
 
 
 def _add_extract_parser(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "extract", description="Extract structured bill data via OpenAI"
-    )
+    parser = subparsers.add_parser("extract", description="Extract structured bill data")
     parser.add_argument(
         "--input-dir",
-        default="bills-converted",
+        default=str(PDF_CONVERSION_OUTPUT_DIR),
         help="Directory containing searchable PDFs to analyze",
     )
     parser.add_argument(
         "--output-json",
-        default="bill_results.json",
+        default=str(BILL_RESULTS_PATH),
         help="Destination JSON file for extracted bill metadata",
     )
     parser.set_defaults(func=_run_extract)
 
 
 def _add_run_all_parser(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "run-all", description="Execute download, OCR, and extraction steps"
-    )
-    parser.add_argument("--url", default=DEFAULT_URL, help="Page containing bill links")
+    parser = subparsers.add_parser("run-all", description="Execute download, OCR, and extraction")
+    parser.add_argument("--url", default=SCRAPER_SOURCE_URL, help="Page containing bill links")
     parser.add_argument(
         "--download-dir",
-        default="bills",
+        default=str(DOWNLOAD_DIR),
         help="Directory where the downloaded PDFs will be stored",
     )
     parser.add_argument(
         "--urls-file",
-        default="pdf_urls.txt",
+        default=str(PDF_URLS_PATH),
         help="Where to write the list of discovered PDF URLs",
     )
     parser.add_argument(
         "--converted-dir",
-        default="bills-converted",
+        default=str(PDF_CONVERSION_OUTPUT_DIR),
         help="Directory for the OCR-converted PDFs",
     )
     parser.add_argument(
         "--output-json",
-        default="bill_results.json",
+        default=str(BILL_RESULTS_PATH),
         help="Destination JSON file for extracted bill metadata",
     )
     parser.set_defaults(func=_run_all)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Utilities for orchestrating the UF SG legislative pipeline",
-    )
+    parser = argparse.ArgumentParser(description="Utilities for the UF SG legislative pipeline")
     parser.add_argument(
         "--log-level",
         default="INFO",
-        help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

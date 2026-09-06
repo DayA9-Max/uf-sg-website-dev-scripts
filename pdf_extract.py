@@ -1,176 +1,251 @@
-"""Extract structured bill metadata from PDFs using OpenAI."""
+"""Extract structured bill metadata from PDFs using offline parsing + OpenAI fallback."""
 
 from __future__ import annotations
-import os
 
-import pdfplumber
+import hashlib
 import json
 import logging
-from typing import Callable, Iterable, List
+import os
+import re
+from pathlib import Path
 from textwrap import dedent
+from typing import Dict, Iterable, List
+
+import pdfplumber
 from dotenv import load_dotenv
+from openai import OpenAI
 from pydantic import ValidationError
 
-from schemas import BillMetadata
-
 from config import BILL_RESULTS_PATH, PDF_EXTRACTION_INPUT_DIR
+from schemas import BillMetadata
 
 load_dotenv()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 PRIMARY_PROMPT = dedent(
     """
     You are a helpful assistant that returns to me properly formatted json objects in the format
     {"id": "", "title":  "",  "author": "", "sponsor": "", "summary": "",  "status": ""} extracted from the text I provide. Id is at the beginning of the text in the format "XXXX-XXXX" where X is an integer. Summary is a 100 word max summary that does not include authors or sponsors in the summary. Do not include any special escaping characters such as line breaks.
     If the data includes 3000 J. Wayne Reitz Union PO ... or similar, ensure the "status" is "PASSED". Else the "status" property is "TBD".
-    This summary is bad: Resolution Celebrating 50 Years of Women’s Athletics at the University of Florida. Sponsored by Senator Jonathan Stephens, Senator Oscar Santiago, Senator Raj Mia, Senator Catherine Gomez, Senator Taylor Hoerle, Senator Isabelle Gerzenshtein, Senator Hana Ali, Senator Savanah Partridge, Deputy Minority Party Leader Mohammed Faisal, Member-at-Large Jacey Cable, Judiciary Vice-Chair Mason Solomon, Senator Bronson Allemand, Senator Saketh Damera, Senator Jacob Ka.
-    This summary is good: The University of Florida Student Senate acknowledges the remarkable achievements of the Women's Athletics program, which has produced 92 Olympians earning a total of 64 Olympic medals. In recognition of the program's 50th anniversary and the pioneering efforts of Dr. Ruth Alexander, Donna Deutsch, Linda Hall Thornton, and Mimi Ryan in advocating for Women's Athletics in 1972, the Student Senate honors their contributions. Additionally, the Senate expresses admiration for the female athletes representing the Florida Gators, applauding their dedication, perseverance, and commitment to the university. Lastly, the University of Florida Student Senate celebrates the 50th anniversary of the Women's Athletics program at the university.
-    This summary is bad: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings. It has several sponsors, including Judiciary Vice-Chairman Mason Solomon, Senator Mara Vaknin, Senator Julia Haley, Senator Taylor Soukup, Member-at-Large Jacey Cable, Senator Jagger Leach, and Senator Sidney Ruedas. The bill proposes amendments to Rule I, which governs the officers of the Senate. One of the key changes is the process for electing the Senate President, which would occur at the first meeting following the validation of Senate election results. The bill seeks to bring efficiency and transparency to Senate meetings.
-    This summary is good: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings by proposing amendments to Rule I, which governs the officers of the Senate. The key change includes a revised process for electing the Senate President immediately after validating Senate election results. The bill's objective is to enhance efficiency and transparency in Senate meetings.
-    This is a bad summary: "Each February commemorates Black History Month, a period which honors and appreciates the rich culture, history, and contributions of Black and African Americans throughout their continuous str", it is not fully complete
-    Summaries must be full senetences
+    Summaries must be full sentences.
     """
 ).strip()
 
 SECONDARY_PROMPT = dedent(
     """
-    Please return a PROPERLY formatted JSON string, your last response was not properly formatted. The json should be parseable by python. You are a helpful assistant that returns to me properly formatted json objects in the format
-    {"id": "", "title":  "",  "author": "", "sponsor": "", "summary": "",  "status": "TBD"} extracted from the text I provide. Id is at the beginning of the text in the format "XXXX-XXXX" where X is an integer. Summary is a 100 word max summary that does not include authors or sponsors in the summary. Do not include any special escaping characters such as line breaks.
-    This summary is bad: Resolution Celebrating 50 Years of Women’s Athletics at the University of Florida. Sponsored by Senator Jonathan Stephens, Senator Oscar Santiago, Senator Raj Mia, Senator Catherine Gomez, Senator Taylor Hoerle, Senator Isabelle Gerzenshtein, Senator Hana Ali, Senator Savanah Partridge, Deputy Minority Party Leader Mohammed Faisal, Member-at-Large Jacey Cable, Judiciary Vice-Chair Mason Solomon, Senator Bronson Allemand, Senator Saketh Damera, Senator Jacob Ka.
-    This summary is good: The University of Florida Student Senate acknowledges the remarkable achievements of the Women's Athletics program, which has produced 92 Olympians earning a total of 64 Olympic medals. In recognition of the program's 50th anniversary and the pioneering efforts of Dr. Ruth Alexander, Donna Deutsch, Linda Hall Thornton, and Mimi Ryan in advocating for Women's Athletics in 1972, the Student Senate honors their contributions. Additionally, the Senate expresses admiration for the female athletes representing the Florida Gators, applauding their dedication, perseverance, and commitment to the university. Lastly, the University of Florida Student Senate celebrates the 50th anniversary of the Women's Athletics program at the university.
-    This summary is bad: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings. It has several sponsors, including Judiciary Vice-Chairman Mason Solomon, Senator Mara Vaknin, Senator Julia Haley, Senator Taylor Soukup, Member-at-Large Jacey Cable, Senator Jagger Leach, and Senator Sidney Ruedas. The bill proposes amendments to Rule I, which governs the officers of the Senate. One of the key changes is the process for electing the Senate President, which would occur at the first meeting following the validation of Senate election results. The bill seeks to bring efficiency and transparency to Senate meetings.
-    This summary is good: This bill, authored by Judiciary Chairman John Brinkman, aims to modernize and reform Senate meetings by proposing amendments to Rule I, which governs the officers of the Senate. The key change includes a revised process for electing the Senate President immediately after validating Senate election results. The bill's objective is to enhance efficiency and transparency in Senate meetings.
-    This is a bad summary: "Each February commemorates Black History Month, a period which honors and appreciates the rich culture, history, and contributions of Black and African Americans throughout their continuous str", it is not fully complete
-    Summaries must be full senetences
+    Please return a PROPERLY formatted JSON string, your last response was not properly formatted.
+    Return only parseable JSON in this shape:
+    {"id": "", "title": "", "author": "", "sponsor": "", "summary": "", "status": "TBD"}
+    Id is in the form XXXX-XXXX. Summary is <=100 words and should not include author/sponsor lists.
     """
 ).strip()
 
 
 def extract_bill_number(title: str) -> str:
-    """Return the bill number extracted from ``title`` if present."""
-
-    pattern = re.compile(r"\d\d\d\d-\d\d\d\d", re.IGNORECASE)
-    match = re.search(pattern, title)
+    """Return canonical bill identifier extracted from ``title`` when present."""
+    match = re.search(r"\d{4}-\d{4}", title, re.IGNORECASE)
     if match:
-        return "SSB " + match.group()
+        return f"SSB {match.group()}"
     return title
 
+
 def _safe_extract_text(page) -> str:
-    """Return extracted text for a pdfplumber page, defaulting to an empty string."""
     return page.extract_text() or ""
 
 
-def extract_beginning(pdf_path: str) -> str:
-    """Read the opening pages of ``pdf_path`` and return their text."""
+def extract_beginning(pdf_path: str | Path) -> str:
+    """Read the opening pages of ``pdf_path`` and return bounded text."""
     with pdfplumber.open(pdf_path) as pdf:
-        page_texts = []
-        page_count = len(pdf.pages)
-        for index in range(min(2, page_count)):
-            text = _safe_extract_text(pdf.pages[index])
+        page_texts: List[str] = []
+        for index in range(min(2, len(pdf.pages))):
+            text = _safe_extract_text(pdf.pages[index]).strip()
             if text:
                 page_texts.append(text)
 
-        combined_text = "\n".join(page_texts)
-
-        if not combined_text:
-            logger.warning("No text extracted from %s", pdf_path)
-
-        if len(combined_text) > 800:
-            return combined_text[:800]
-        return combined_text
+    combined_text = "\n".join(page_texts)
+    if not combined_text:
+        logger.warning("No text extracted from %s", pdf_path)
+    return combined_text[:1200]
 
 
 def _build_messages(prompt: str, content: str) -> List[dict]:
-    return [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": content},
-    ]
+    return [{"role": "system", "content": prompt}, {"role": "user", "content": content}]
 
 
-def generate_message(content: str) -> List[dict]:
-    return _build_messages(PRIMARY_PROMPT, content)
+def _build_offline_metadata(filename: str, text: str) -> Dict[str, str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    joined = " ".join(lines)
+
+    title = lines[0] if lines else filename
+    author = ""
+    sponsor = ""
+
+    author_match = re.search(r"(?:author|authored by)\s*[:\-]\s*([^\n\.]+)", joined, re.IGNORECASE)
+    if author_match:
+        author = author_match.group(1).strip()
+
+    sponsor_match = re.search(r"(?:sponsor|sponsored by)\s*[:\-]\s*([^\n\.]+)", joined, re.IGNORECASE)
+    if sponsor_match:
+        sponsor = sponsor_match.group(1).strip()
+
+    summary_words = joined.split()[:100]
+    summary = " ".join(summary_words)
+    status = "PASSED" if "3000 J. Wayne Reitz Union" in joined else "TBD"
+
+    return {
+        "id": extract_bill_number(filename),
+        "title": title,
+        "author": author,
+        "sponsor": sponsor,
+        "summary": summary,
+        "status": status,
+    }
 
 
-def generate_message_second(content: str) -> List[dict]:
-    return _build_messages(SECONDARY_PROMPT, content)
+def _get_openai_client() -> OpenAI | None:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    return OpenAI(api_key=api_key)
 
 
-def get_gpt_info(message: Iterable[dict]) -> str:
-    response = openai.ChatCompletion.create(
+def _get_gpt_info(client: OpenAI, messages: Iterable[dict]) -> str:
+    response = client.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=list(message),
-        temperature=1,
-        max_tokens=1500,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0,
+        messages=list(messages),
+        temperature=0.2,
+        max_tokens=1000,
     )
-    return response["choices"][0]["message"]["content"]
+    return response.choices[0].message.content or "{}"
 
 
-def _process_file(
-    pdf_folder: str,
-    filename: str,
-    message_builder: Callable[[str], Iterable[dict]],
-) -> dict:
-    pdf_path = os.path.join(pdf_folder, filename)
-    message = message_builder(extract_beginning(pdf_path))
-    logger.info("Sending extracted text for %s", filename)
-
-    bill_info = get_gpt_info(message)
-    bill_as_json = json.loads(bill_info)
-    bill_as_json["id"] = extract_bill_number(filename)
-    return bill_as_json
-
-
-# pdf_folder = 'bills-converted'
-pdf_folder = PDF_EXTRACTION_INPUT_DIR
-
-if not os.path.isdir(pdf_folder):
-    raise FileNotFoundError(f"PDF folder does not exist: {pdf_folder}")
-
-for pdf_file in sorted(pdf_folder.glob("*.pdf")):
-    message = generate_message(extract_beginning(pdf_file))
-    print("Extraction complete: " + pdf_file.name)
-    print("="*40)
-
-    bill_info = get_gpt_info(message)
+def _load_existing_results(path: Path) -> Dict[str, dict]:
+    if not path.exists():
+        return {}
     try:
-        bill_as_json = json.loads(bill_info)
-        bill_as_json["id"] = extract_bill_number(pdf_file.name)
-        results.append(bill_as_json)
-    except:
-        print("Error " + pdf_file.name)
-        error_paths.append(pdf_file)
-    print(len(results))
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, list):
+        return {}
+    existing = {}
+    for item in data:
+        if isinstance(item, dict):
+            bill_id = str(item.get("id", "")).strip()
+            if bill_id:
+                existing[bill_id] = item
+    return existing
 
-for pdf_file in error_paths:
-    if pdf_file.suffix.lower() == '.pdf':
-        message = generate_message_second(extract_beginning(pdf_file))
-        print("Extraction complete: " + pdf_file.name)
-        print("="*40)
 
-    second_pass_failures: List[str] = []
-    for filename in error_paths:
+def _load_hash_cache(path: Path) -> Dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _extract_with_optional_llm(client: OpenAI | None, filename: str, text: str) -> Dict[str, str]:
+    offline = _build_offline_metadata(filename, text)
+    if client is None:
+        return offline
+
+    for prompt in (PRIMARY_PROMPT, SECONDARY_PROMPT):
         try:
-            bill_as_json = json.loads(bill_info)
-            bill_as_json["id"] = extract_bill_number(pdf_file.name)
-            results.append(bill_as_json)
-        except:
-            print("Error " + pdf_file.name)
-            error_paths.append(pdf_file)
-        print(len(results))
+            message = _build_messages(prompt, text)
+            raw = _get_gpt_info(client, message)
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                merged = offline.copy()
+                for key in ("title", "author", "sponsor", "summary", "status"):
+                    value = parsed.get(key)
+                    if value is not None and str(value).strip():
+                        merged[key] = str(value).strip()
+                merged["id"] = extract_bill_number(filename)
+                return merged
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("LLM extraction failed for %s: %s", filename, exc)
 
-    logging.basicConfig(level=logging.INFO)
+    return offline
+
+
+def extract_metadata(
+    pdf_folder: str | Path = PDF_EXTRACTION_INPUT_DIR,
+    output_json: str | Path = BILL_RESULTS_PATH,
+) -> List[dict]:
+    """Extract and validate metadata for PDFs in ``pdf_folder``.
+
+    Uses hash cache + prior output to safely skip unchanged files.
+    """
+
+    pdf_dir = Path(pdf_folder)
+    if not pdf_dir.is_dir():
+        raise FileNotFoundError(f"PDF folder does not exist: {pdf_dir}")
+
+    output_path = Path(output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    hash_path = output_path.with_suffix(output_path.suffix + ".hashes.json")
+    previous_results = _load_existing_results(output_path)
+    previous_hashes = _load_hash_cache(hash_path)
+    updated_hashes: Dict[str, str] = {}
+
+    client = _get_openai_client()
+    if client is None:
+        logger.info("OPENAI_API_KEY not set; using offline extraction only")
+
+    results: List[dict] = []
+
+    for pdf_file in sorted(pdf_dir.glob("*.pdf")):
+        file_hash = _sha256_file(pdf_file)
+        cache_key = pdf_file.name
+        bill_id = extract_bill_number(pdf_file.name)
+        updated_hashes[cache_key] = file_hash
+
+        if previous_hashes.get(cache_key) == file_hash and bill_id in previous_results:
+            logger.info("Reusing cached extraction for %s", pdf_file.name)
+            cached_item = previous_results[bill_id]
+            try:
+                results.append(BillMetadata(**cached_item).dict())
+            except ValidationError:
+                logger.warning("Cached record failed validation for %s; reprocessing", bill_id)
+            else:
+                continue
+
+        text = extract_beginning(pdf_file)
+        payload = _extract_with_optional_llm(client, pdf_file.name, text)
+        payload["id"] = extract_bill_number(pdf_file.name)
+
+        try:
+            normalized = BillMetadata(**payload).dict()
+        except ValidationError as exc:
+            logger.warning("Skipping invalid extraction for %s: %s", pdf_file.name, exc)
+            continue
+
+        results.append(normalized)
+        logger.info("Extraction complete: %s", pdf_file.name)
+
+    output_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    hash_path.write_text(json.dumps(updated_hashes, indent=2), encoding="utf-8")
+    logger.info("Wrote %d records to %s", len(results), output_path)
+    return results
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     extract_metadata()
 
-with BILL_RESULTS_PATH.open('w') as json_file:
-    json.dump(results, json_file, indent=4)
 
 if __name__ == "__main__":
     main()

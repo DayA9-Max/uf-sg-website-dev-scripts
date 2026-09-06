@@ -1,173 +1,144 @@
 """OCR helpers for converting PDFs into searchable versions."""
 
+from __future__ import annotations
+
+import hashlib
 import io
+import json
+import logging
 import os
 import shutil
-from typing import Iterable, List, Tuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
 import pytesseract
+from dotenv import load_dotenv
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader, PdfWriter
-from dotenv import load_dotenv
-load_dotenv()
 
 from config import PDF_CONVERSION_INPUT_DIR, PDF_CONVERSION_OUTPUT_DIR
+
+load_dotenv()
 
 POPPLER_PATH = os.getenv("POPPLER_PATH")
 TESSERACT_PATH = os.getenv("TESSERACT_PATH")
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
-def is_text_searchable(pdf_path, output_path):
-    """Checks if a PDF file is text-searchable.
-    Args:
-      pdf_path: The path to the PDF file.
+logger = logging.getLogger(__name__)
 
-    Returns:
-      True if the PDF file is text-searchable, False otherwise.
-    """
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_manifest(path: Path) -> Dict[str, str]:
+    if not path.exists():
+        return {}
     try:
-        reader = PdfReader(pdf_path)
-        text = (reader.pages[0].extract_text() or "") # handle None
-        print(text)
-        if len(text) > 0:
-            shutil.copy(pdf_path, output_path) # cross-platform copy
-            print("copied")
-            return True
-        else:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _save_manifest(path: Path, payload: Dict[str, str]) -> None:
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def is_text_searchable(pdf_path: Path) -> bool:
+    """Return True if first page contains selectable text."""
+    try:
+        reader = PdfReader(str(pdf_path))
+        if not reader.pages:
             return False
-    except Exception as e:
-        print(f"Error on {pdf_path}: {e}")
-        return True  # Don't try converting
+        text = (reader.pages[0].extract_text() or "").strip()
+        return bool(text)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Failed reading %s; assuming OCR needed (%s)", pdf_path, exc)
+        return False
 
 
-def convert_pdf_to_text_searchable(pdf_path, output_path):
-    """Converts a PDF file to a text-searchable PDF file using Tesseract.
-    Args:
-      pdf_path: The path to the PDF file to convert.
-
-    Returns:
-      A tuple of (output_path, converted) where converted is True if the file was newly 
-      created and False if the output already existed.
-    """
-
-    # Don't process pdfs that are already converted
-    if os.path.isfile(output_path) == True:
-        print("ALREADY CONVERTED")
-        return output_path, False
+def convert_pdf_to_text_searchable(pdf_path: Path, output_path: Path) -> None:
+    """Convert an image-based PDF file into a text-searchable PDF."""
     kwargs = {}
     if POPPLER_PATH:
         kwargs["poppler_path"] = POPPLER_PATH
-    images = convert_from_path(pdf_path, **kwargs)
-    pdf_pages = []
-    for image in images:
-        text = pytesseract.image_to_pdf_or_hocr(image, extension="pdf")
-        pdf_pages.append(text)
 
+    images = convert_from_path(str(pdf_path), **kwargs)
     pdf_writer = PdfWriter()
-    for page in pdf_pages:
-        pdf = PdfReader(io.BytesIO(page))
-        pdf_writer.add_page(pdf.pages[0])
 
-    with open(output_path, "w+b") as file:
+    for image in images:
+        text_pdf = pytesseract.image_to_pdf_or_hocr(image, extension="pdf")
+        page_pdf = PdfReader(io.BytesIO(text_pdf))
+        pdf_writer.add_page(page_pdf.pages[0])
+
+    with output_path.open("w+b") as file:
         pdf_writer.write(file)
 
-    return output_path, True
 
-
-def _iter_pdf_paths(input_dir: str, output_dir: str) -> Iterable[Tuple[str, str]]:
-    """Yield pairs of input and output PDF paths for files in ``input_dir``."""
-
-    for entry in sorted(os.listdir(input_dir)):
-        if entry.lower().endswith(".pdf"):
-            yield os.path.join(input_dir, entry), os.path.join(output_dir, entry)
+def _iter_pdf_paths(input_dir: Path, output_dir: Path) -> Iterable[Tuple[Path, Path]]:
+    for entry in sorted(input_dir.iterdir()):
+        if entry.is_file() and entry.suffix.lower() == ".pdf":
+            yield entry, output_dir / entry.name
 
 
 def convert_directory(
-    input_dir: str = PDF_CONVERSION_INPUT_DIR,
-    output_dir: str = PDF_CONVERSION_OUTPUT_DIR,
+    input_dir: str | Path = PDF_CONVERSION_INPUT_DIR,
+    output_dir: str | Path = PDF_CONVERSION_OUTPUT_DIR,
 ) -> List[Tuple[str, bool]]:
-    """Convert PDFs in ``input_dir`` into searchable PDFs within ``output_dir``."""
+    """Convert PDFs in ``input_dir`` into searchable PDFs within ``output_dir``.
 
-    if not os.path.isdir(input_dir):
-        raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
+    Returns tuples of (output_path, converted) where converted indicates OCR was run.
+    """
 
-    print("Beginning OCR scan")
-    os.makedirs(output_dir, exist_ok=True)
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    if not input_path.is_dir():
+        raise FileNotFoundError(f"Input directory does not exist: {input_path}")
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_path / ".ocr_manifest.json"
+    prior_manifest = _load_manifest(manifest_path)
+    next_manifest: Dict[str, str] = {}
 
     results: List[Tuple[str, bool]] = []
-    for pdf_path, output_path in _iter_pdf_paths(input_dir, output_dir):
-        output_pdf_path = None
-        converted = False
-        skip_message = None
+
+    for pdf_path, destination in _iter_pdf_paths(input_path, output_path):
+        source_hash = _sha256_file(pdf_path)
+        next_manifest[pdf_path.name] = source_hash
+
+        if destination.exists() and prior_manifest.get(pdf_path.name) == source_hash:
+            logger.info("Skipping unchanged OCR artifact: %s", pdf_path.name)
+            results.append((str(destination), False))
+            continue
 
         try:
-            if is_text_searchable(pdf_path, output_path):
-                output_pdf_path = output_path
-                skip_message = (
-                    f"Skipped conversion for {pdf_path} (already text-searchable)."
-                )
+            if is_text_searchable(pdf_path):
+                shutil.copy2(pdf_path, destination)
+                logger.info("Copied searchable PDF: %s", pdf_path.name)
+                results.append((str(destination), False))
             else:
-                output_pdf_path, converted = convert_pdf_to_text_searchable(
-                    pdf_path, output_path
-                )
-        except Exception as exc:
-            print(f"Error converting {pdf_path}: {exc}")
-        else:
-            if converted and output_pdf_path:
-                print(f"Converted {pdf_path} to {output_pdf_path}.")
-            elif skip_message:
-                print(skip_message)
-            elif output_pdf_path:
-                print(
-                    f"Skipped conversion for {pdf_path} (already converted output exists)."
-                )
+                convert_pdf_to_text_searchable(pdf_path, destination)
+                logger.info("OCR converted: %s", pdf_path.name)
+                results.append((str(destination), True))
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Error converting %s: %s", pdf_path, exc)
 
-        if output_pdf_path:
-            results.append((output_pdf_path, converted))
-
+    _save_manifest(manifest_path, next_manifest)
     return results
 
 
 def main() -> None:
     """CLI entry point to convert PDFs using default settings."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    convert_directory()
 
-    input_dir = PDF_CONVERSION_INPUT_DIR
-    output_dir = PDF_CONVERSION_OUTPUT_DIR
-
-    if not os.path.isdir(input_dir):
-        raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    for pdf_path, output_path in _iter_pdf_paths(input_dir, output_dir):
-        output_pdf_path = None
-        converted = False
-        skip_message = None
-
-        try:
-            if is_text_searchable(pdf_path, output_path):
-                output_pdf_path = output_path
-                skip_message = (
-                    f"Skipped conversion for {pdf_path} (already text-searchable)."
-                )
-            else:
-                output_pdf_path, converted = convert_pdf_to_text_searchable(
-                    pdf_path, output_path
-                )
-        except Exception as exc:
-            print(f"Error converting {pdf_path}: {exc}")
-        else:
-            if converted and output_pdf_path:
-                print(f"Converted {pdf_path} to {output_pdf_path}.")
-            elif skip_message:
-                print(skip_message)
-            elif output_pdf_path:
-                print(
-                    f"Skipped conversion for {pdf_path} (already converted output exists)."
-                )
-
-        if output_pdf_path:
-            print(f"Searchable PDF available at {output_pdf_path}")
 
 if __name__ == "__main__":
     main()

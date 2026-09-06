@@ -46,7 +46,7 @@ PDF_CONVERSION_OUTPUT_DIR = _resolve_path(
 )
 PDF_EXTRACTION_INPUT_DIR = _resolve_path(
     os.getenv("UFSG_EXTRACTION_INPUT_DIR"),
-    default=BASE_DIR / "test",
+    default=PDF_CONVERSION_OUTPUT_DIR,
 )
 BILL_RESULTS_PATH = _resolve_path(
     os.getenv("UFSG_BILL_RESULTS_PATH"),
