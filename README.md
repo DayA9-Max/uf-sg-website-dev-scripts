@@ -19,7 +19,7 @@ This repository contains standalone Python scripts that power the legislative do
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-2. **Prepare directories** – Create the `bills/`, `bills-converted/`, and `test/` folders to match script expectations, or override the defaults via environment variables (see below). The scraper and converter will create directories automatically when they are missing.
+2. **Prepare directories** – Create the `bills/` and `bills-converted/` folders (or override defaults via environment variables). The scraper and converter will create directories automatically when they are missing.
 3. **Configure credentials** – Provide a Firebase Admin service-account JSON for Firestore access and set the `OPENAI_API_KEY` environment variable (or load both via `.env`). The Firestore scripts read `FIREBASE_SERVICE_ACCOUNT`, which can contain either the absolute path to the service-account JSON file or the raw JSON string. For example:
    ```env
    FIREBASE_SERVICE_ACCOUNT=/absolute/path/to/firebase-admin.json
@@ -38,7 +38,7 @@ This repository contains standalone Python scripts that power the legislative do
    | `UFSG_PDF_URLS_PATH` | `pdf_urls.txt` | File that stores the list of discovered PDF URLs. |
    | `UFSG_CONVERSION_INPUT_DIR` | `bills/` | Directory scanned for PDFs that might require OCR conversion. |
    | `UFSG_CONVERSION_OUTPUT_DIR` | `bills-converted/` | Destination directory for converted, searchable PDFs. |
-   | `UFSG_EXTRACTION_INPUT_DIR` | `test/` | Directory that `pdf_extract.py` scans when building `bill_results.json`. |
+   | `UFSG_EXTRACTION_INPUT_DIR` | `bills-converted/` | Directory that `pdf_extract.py` scans when building `bill_results.json`. |
    | `UFSG_BILL_RESULTS_PATH` | `bill_results.json` | Location of the JSON metadata exported by `pdf_extract.py`. |
    | `UFSG_LEGISLATION_DATA_PATH` | `legislation_data.json` | Shared path used by `export_data.py` and `firestore_sync.py`. |
    | `FIREBASE_SERVICE_ACCOUNT` | _(required)_ | Path to your Firebase Admin SDK service-account JSON or the raw JSON document. |
@@ -51,7 +51,7 @@ This repository contains standalone Python scripts that power the legislative do
 ## Typical Workflow
 1. Run `app.py` to refresh the list of Senate legislation PDFs and download them locally.
 2. Run `convert_searchable_pdf.py` to create searchable copies of any image-only PDFs.
-3. Run `pdf_extract.py` to produce structured metadata, handling retries for malformed AI responses as needed.
+3. Run `pdf_extract.py` to produce structured metadata with offline-first extraction; OpenAI is used only when `OPENAI_API_KEY` is set.
 4. Use `export_data.py` to snapshot the current Firestore data or to filter data down to Senate bills.
 5. Apply updates with `firestore_sync.py`, which writes the normalized records back to Firestore.
 
@@ -87,5 +87,5 @@ Use `export_data.py` to snapshot the current Firestore data or to filter data do
 
 ## Additional Tips
 
-- Many scripts catch broad exceptions; consider adding more granular logging and retry logic, especially around network or API calls.
+- Re-runs are idempotent for unchanged files: downloader and extraction steps cache artifacts using file hashes.
 - Monitor storage usage in Firestore and local directories to avoid stale or duplicated artifacts.
